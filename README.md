@@ -86,10 +86,3 @@ Second call for same prefix:
 pip install -r requirements.txt
 pytest tests/ -v
 ```
-
-## 📈 Resume Bullet Points
-
-- *Built a search autocomplete system using a custom Trie implementation with O(L) insert/search complexity, serving top-k frequency-ranked suggestions via FastAPI*
-- *Integrated Redis caching layer reducing repeated prefix query latency by ~75% with automatic cache invalidation on word insertion*
-- *Preloaded Trie with 60+ real-world search terms with frequency weights; supports dynamic insertion, deletion, and bulk loading*
-- *Wrote 15 unit and integration tests covering Trie operations, frequency ranking, cache behavior, and all API endpoints*

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Search Autocomplete</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e37;
+    --text: #e8eaed;
+    --muted: #8b92a3;
+    --accent: #4f8cff;
+    --accent-dim: #294067;
+    --danger: #ff5c5c;
+    --success: #3ddc97;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    padding: 48px 16px;
+  }
+  .app {
+    width: 100%;
+    max-width: 640px;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 28px;
+  }
+  .search-wrap {
+    position: relative;
+  }
+  input#search {
+    width: 100%;
+    padding: 14px 44px 14px 16px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s;
+  }
+  input#search:focus {
+    border-color: var(--accent);
+  }
+  .meta {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .suggestions {
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    overflow: hidden;
+    display: none;
+  }
+  .suggestions.open { display: block; }
+  .suggestion {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .suggestion:last-child { border-bottom: none; }
+  .suggestion:hover, .suggestion.active {
+    background: var(--accent-dim);
+  }
+  .word b { color: var(--accent); }
+  .freq {
+    font-size: 12px;
+    color: var(--muted);
+    background: #0000002e;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .empty {
+    padding: 14px 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .panel {
+    margin-top: 36px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--panel);
+  }
+  .panel h2 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .row input {
+    flex: 1;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0f1115;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .row input[type="number"] { max-width: 90px; flex: none; }
+  button {
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.insert { background: var(--accent); color: white; }
+  button.delete { background: var(--danger); color: white; }
+  button:hover { filter: brightness(1.1); }
+  .toast {
+    font-size: 12px;
+    margin-top: 8px;
+    min-height: 16px;
+  }
+  .toast.ok { color: var(--success); }
+  .toast.err { color: var(--danger); }
+  .stats {
+    display: flex;
+    gap: 20px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .stats b { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Search Autocomplete</h1>
+  <div class="subtitle">Trie + Redis backed prefix search — type below</div>
+
+  <div class="search-wrap">
+    <input id="search" type="text" placeholder="Start typing... e.g. py, goog, data" autocomplete="off">
+    <span class="meta" id="meta"></span>
+  </div>
+  <div class="suggestions" id="suggestions"></div>
+
+  <div class="panel">
+    <h2>Insert word</h2>
+    <div class="row">
+      <input id="insert-word" type="text" placeholder="word">
+      <input id="insert-freq" type="number" placeholder="freq" value="100">
+      <button class="insert" id="insert-btn">Insert</button>
+    </div>
+    <h2 style="margin-top:16px">Delete word</h2>
+    <div class="row">
+      <input id="delete-word" type="text" placeholder="word">
+      <button class="delete" id="delete-btn">Delete</button>
+    </div>
+    <div class="toast" id="toast"></div>
+    <div class="stats" id="stats"></div>
+  </div>
+</div>
+
+<script>
+const API = "";
+const searchInput = document.getElementById("search");
+const suggestionsEl = document.getElementById("suggestions");
+const metaEl = document.getElementById("meta");
+const toastEl = document.getElementById("toast");
+const statsEl = document.getElementById("stats");
+
+let debounceTimer = null;
+let activeIndex = -1;
+let currentItems = [];
+
+function debounce(fn, delay) {
+  return (...args) => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+function highlight(word, prefix) {
+  if (!prefix) return word;
+  const idx = word.toLowerCase().indexOf(prefix.toLowerCase());
+  if (idx === -1) return word;
+  return word.slice(0, idx) + "<b>" + word.slice(idx, idx + prefix.length) + "</b>" + word.slice(idx + prefix.length);
+}
+
+function renderSuggestions(items, prefix) {
+  currentItems = items;
+  activeIndex = -1;
+  if (!items.length) {
+    suggestionsEl.innerHTML = `<div class="empty">No matches for "${prefix}"</div>`;
+    suggestionsEl.classList.add("open");
+    return;
+  }
+  suggestionsEl.innerHTML = items.map((item, i) => `
+    <div class="suggestion" data-index="${i}">
+      <span class="word">${highlight(item.word, prefix)}</span>
+      <span class="freq">${item.frequency.toLocaleString()}</span>
+    </div>
+  `).join("");
+  suggestionsEl.classList.add("open");
+
+  suggestionsEl.querySelectorAll(".suggestion").forEach(el => {
+    el.addEventListener("click", () => {
+      const i = parseInt(el.dataset.index, 10);
+      selectSuggestion(currentItems[i]);
+    });
+  });
+}
+
+function selectSuggestion(item) {
+  searchInput.value = item.word;
+  suggestionsEl.classList.remove("open");
+  recordSearch(item.word);
+}
+
+async function recordSearch(word) {
+  try {
+    await fetch(`${API}/search?q=${encodeURIComponent(word)}`, { method: "POST" });
+  } catch (e) {}
+}
+
+async function fetchSuggestions(prefix) {
+  const start = performance.now();
+  try {
+    const res = await fetch(`${API}/autocomplete?q=${encodeURIComponent(prefix)}&top_k=8`);
+    const data = await res.json();
+    const clientMs = (performance.now() - start).toFixed(1);
+    metaEl.textContent = `${data.source} · ${data.latency_ms}ms`;
+    renderSuggestions(data.suggestions, prefix);
+  } catch (e) {
+    metaEl.textContent = "offline?";
+    suggestionsEl.innerHTML = `<div class="empty">Could not reach API</div>`;
+    suggestionsEl.classList.add("open");
+  }
+}
+
+const debouncedFetch = debounce(fetchSuggestions, 150);
+
+searchInput.addEventListener("input", () => {
+  const val = searchInput.value.trim();
+  if (!val) {
+    suggestionsEl.classList.remove("open");
+    metaEl.textContent = "";
+    return;
+  }
+  debouncedFetch(val);
+});
+
+searchInput.addEventListener("keydown", (e) => {
+  const items = suggestionsEl.querySelectorAll(".suggestion");
+  if (!items.length) return;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    activeIndex = Math.min(activeIndex + 1, items.length - 1);
+    updateActive(items);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    activeIndex = Math.max(activeIndex - 1, 0);
+    updateActive(items);
+  } else if (e.key === "Enter") {
+    if (activeIndex >= 0 && currentItems[activeIndex]) {
+      selectSuggestion(currentItems[activeIndex]);
+    }
+  } else if (e.key === "Escape") {
+    suggestionsEl.classList.remove("open");
+  }
+});
+
+function updateActive(items) {
+  items.forEach(el => el.classList.remove("active"));
+  if (activeIndex >= 0) items[activeIndex].classList.add("active");
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search-wrap") && !e.target.closest(".suggestions")) {
+    suggestionsEl.classList.remove("open");
+  }
+});
+
+function showToast(msg, ok) {
+  toastEl.textContent = msg;
+  toastEl.className = "toast " + (ok ? "ok" : "err");
+  setTimeout(() => { toastEl.textContent = ""; }, 3000);
+}
+
+document.getElementById("insert-btn").addEventListener("click", async () => {
+  const word = document.getElementById("insert-word").value.trim();
+  const freq = parseInt(document.getElementById("insert-freq").value, 10) || 1;
+  if (!word) return showToast("Enter a word first", false);
+  try {
+    const res = await fetch(`${API}/words/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word, frequency: freq })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(data.message, true);
+      document.getElementById("insert-word").value = "";
+      loadStats();
+    } else {
+      showToast(data.detail || "Insert failed", false);
+    }
+  } catch (e) {
+    showToast("Could not reach API", false);
+  }
+});
+
+document.getElementById("delete-btn").addEventListener("click", async () => {
+  const word = document.getElementById("delete-word").value.trim();
+  if (!word) return showToast("Enter a word first", false);
+  try {
+    const res = await fetch(`${API}/words/`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(data.message, true);
+      document.getElementById("delete-word").value = "";
+      loadStats();
+    } else {
+      showToast(data.detail || "Delete failed", false);
+    }
+  } catch (e) {
+    showToast("Could not reach API", false);
+  }
+});
+
+async function loadStats() {
+  try {
+    const res = await fetch(`${API}/analytics/stats`);
+    const data = await res.json();
+    statsEl.innerHTML = `
+      <span>Words: <b>${data.trie.total_words}</b></span>
+      <span>Cache keys: <b>${data.cache.total_cached_keys ?? "-"}</b></span>
+      <span>Hits: <b>${data.cache.cache_hits ?? "-"}</b></span>
+      <span>Misses: <b>${data.cache.cache_misses ?? "-"}</b></span>
+    `;
+  } catch (e) {}
+}
+
+loadStats();
+setInterval(loadStats, 5000);
+</script>
+</body>
+</html>
